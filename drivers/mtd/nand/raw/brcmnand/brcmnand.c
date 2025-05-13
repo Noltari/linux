@@ -214,7 +214,7 @@ static const u8 native_cmd_conv[] = {
 	[NAND_CMD_READID]	= CMD_DEVICE_ID_READ,
 	[NAND_CMD_ERASE2]	= CMD_NULL,
 	[NAND_CMD_PARAM]	= CMD_PARAMETER_READ,
-	[NAND_CMD_GET_FEATURES]	= CMD_NOT_SUPPORTED,
+	[NAND_CMD_GET_FEATURES]	= NAND_CMD_GET_FEATURES,
 	[NAND_CMD_SET_FEATURES]	= CMD_NOT_SUPPORTED,
 	[NAND_CMD_RESET]	= CMD_NOT_SUPPORTED,
 	[NAND_CMD_READSTART]	= CMD_NOT_SUPPORTED,
@@ -2579,6 +2579,13 @@ static int brcmnand_exec_instructions_legacy(struct nand_chip *chip,
 			else if (cmd == CMD_PARAMETER_CHANGE_COL)
 				addr &= ~((u64)(FC_BYTES - 1));
 
+			if (cmd == NAND_CMD_GET_FEATURES ||
+			    cmd == NAND_CMD_SET_FEATURES) {
+				brcmnand_low_level_op(host, LL_OP_CMD, cmd, false);
+				brcmnand_low_level_op(host, LL_OP_ADDR, addr, false);
+				continue;
+			}
+
 			brcmnand_set_cmd_addr(mtd, addr);
 			brcmnand_send_cmd(host, cmd);
 			last_addr = addr;
@@ -2642,6 +2649,25 @@ static int brcmnand_exec_instructions_legacy(struct nand_chip *chip,
 
 					in[j] = ctrl->flash_cache[offs];
 				}
+			} else if (last_cmd == NAND_CMD_GET_FEATURES) {
+				u32 val;
+
+				dev_err(ctrl->dev, "NAND_CMD_GET_FEATURES: ");
+
+				for (j = 0; j < instr->ctx.data.len; j++) {
+					if (j >= ONFI_SUBFEATURE_PARAM_LEN) {
+						in[j] = 0;
+					} else {
+						bool last = j == ONFI_SUBFEATURE_PARAM_LEN - 1;
+						brcmnand_low_level_op(host, LL_OP_RD, 0, last);
+						val = brcmnand_read_reg(ctrl, BRCMNAND_LL_RDATA);
+						in[j] = val & 0xff;
+					}
+
+					dev_err(ctrl->dev, "%02x ", in[j]);
+				}
+
+				dev_err(ctrl->dev, "\n");
 			}
 		} else if (instr->type == NAND_OP_WAITRDY_INSTR) {
 			ret = bcmnand_ctrl_poll_status(host, NAND_CTRL_RDY, NAND_CTRL_RDY, 0);
