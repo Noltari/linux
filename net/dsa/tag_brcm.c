@@ -5,6 +5,7 @@
  * Copyright (C) 2014 Broadcom Corporation
  */
 
+#include <linux/crc32.h>
 #include <linux/dsa/brcm.h>
 #include <linux/etherdevice.h>
 #include <linux/if_vlan.h>
@@ -217,12 +218,23 @@ MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_BRCM, BRCM_NAME);
 #endif
 
 #if IS_ENABLED(CONFIG_NET_DSA_TAG_BRCM_LEGACY)
+#define BRCM_LEG_TAG_DEBUG_RX
+#define BRCM_LEG_TAG_DEBUG_TX
+
+#if defined(BRCM_LEG_TAG_DEBUG_RX) || defined(BRCM_LEG_TAG_DEBUG_TX)
+static DEFINE_SPINLOCK(brcm_leg_lock);
+#endif /* BRCM_LEG_TAG_DEBUG_RX || BRCM_LEG_TAG_DEBUG_TX */
+
 static struct sk_buff *brcm_leg_tag_xmit(struct sk_buff *skb,
 					 struct net_device *dev)
 {
 	struct dsa_port *dp = dsa_user_to_port(dev);
 	unsigned int skb_len;
-	__wsum skb_csum;
+#if defined(BRCM_LEG_TAG_DEBUG_TX)
+	unsigned long flags;
+	unsigned int i;
+#endif /* BRCM_LEG_TAG_DEBUG_TX */
+	u32 orig_fcs;
 	u8 *brcm_tag;
 
 	/* The Ethernet switch we are interfaced with needs packets to be at
@@ -238,7 +250,16 @@ static struct sk_buff *brcm_leg_tag_xmit(struct sk_buff *skb,
 		return NULL;
 
 	skb_len = skb->len;
-	skb_csum = skb_checksum(skb, 0, skb_len, 0);
+	orig_fcs = crc32(0, skb->data, skb_len);
+
+#if defined(BRCM_LEG_TAG_DEBUG_TX)
+	spin_lock_irqsave(&brcm_leg_lock, flags);
+	printk(KERN_INFO "TX: fcs=%x\n", orig_fcs);
+	printk(KERN_INFO "TX data: ");
+	for (i = 0; i < skb_len; i++)
+		printk(KERN_CONT "%02x", skb->data[i]);
+	printk(KERN_CONT "\n");
+#endif /* BRCM_LEG_TAG_DEBUG_TX */
 
 	skb_push(skb, BRCM_LEG_TAG_LEN);
 
@@ -257,7 +278,13 @@ static struct sk_buff *brcm_leg_tag_xmit(struct sk_buff *skb,
 	brcm_tag[5] = dp->index & BRCM_LEG_PORT_ID;
 
 	/* Original FCS value */
-	skb_put_data(skb, &skb_csum, ETH_FCS_LEN);
+	skb_put_data(skb, &orig_fcs, ETH_FCS_LEN);
+
+#if defined(BRCM_LEG_TAG_DEBUG_TX)
+	print_hex_dump(KERN_INFO, "TX tag: ", DUMP_PREFIX_NONE, 16, 1, brcm_tag, BRCM_LEG_TAG_LEN, false);
+	skb_dump(KERN_INFO, skb, false);
+	spin_unlock_irqrestore(&brcm_leg_lock, flags);
+#endif /* BRCM_LEG_TAG_DEBUG_TX */
 
 	return skb;
 }
@@ -266,6 +293,10 @@ static struct sk_buff *brcm_leg_tag_rcv(struct sk_buff *skb,
 					struct net_device *dev)
 {
 	int len = BRCM_LEG_TAG_LEN;
+#if defined(BRCM_LEG_TAG_DEBUG_RX)
+	unsigned long flags;
+	int headroom;
+#endif /* BRCM_LEG_TAG_DEBUG_RX */
 	int source_port;
 	u8 *brcm_tag;
 
@@ -273,6 +304,16 @@ static struct sk_buff *brcm_leg_tag_rcv(struct sk_buff *skb,
 		return NULL;
 
 	brcm_tag = dsa_etype_header_pos_rx(skb);
+
+#if defined(BRCM_LEG_TAG_DEBUG_RX)
+	spin_lock_irqsave(&brcm_leg_lock, flags);
+	print_hex_dump(KERN_INFO, "RX tag: ", DUMP_PREFIX_NONE, 16, 1, brcm_tag, BRCM_LEG_TAG_LEN, false);
+	headroom = skb_headroom(skb);
+	if (headroom)
+		print_hex_dump(KERN_INFO, "skb headroom: ", DUMP_PREFIX_OFFSET, 16, 1, skb->head, headroom, false);
+	skb_dump(KERN_INFO, skb, false);
+	spin_unlock_irqrestore(&brcm_leg_lock, flags);
+#endif /* BRCM_LEG_TAG_DEBUG_RX */
 
 	source_port = brcm_tag[5] & BRCM_LEG_PORT_ID;
 
