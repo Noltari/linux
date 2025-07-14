@@ -1296,8 +1296,9 @@ static int emc2101_pwm_freq_write(struct device *dev, long val)
 		base_clk = CLK_FREQ_BASE;
 
 	pwm_freq = base_clk / (2 * pwm_freq_div * val);
+	pwm_freq = clamp_val(pwm_freq, 1, PWM_FREQ_MASK);
 
-	return emc2101_pwm_write(data->fields[F_PWM_FREQ], pwm_freq);
+	return regmap_field_write(data->fields[F_PWM_FREQ], pwm_freq);
 }
 
 static int emc2101_pwm_input_read(struct device *dev, long *val)
